@@ -50,6 +50,11 @@ func main() {
 		log.Println("Logged in to qBittorrent")
 	}
 
+	telegram := NewTelegramClient(cfg.TelegramBotToken, cfg.TelegramChatID)
+	if telegram != nil {
+		log.Println("Telegram notifications enabled")
+	}
+
 	state := StateIdle
 	streamingCounter := 0
 	idleCounter := 0
@@ -116,6 +121,16 @@ func main() {
 				if err := qbt.SetUploadLimit(limitBytes); err != nil {
 					log.Printf("Error setting upload limit: %v", err)
 					return false
+				}
+
+				var msg string
+				if newState == StateStreaming {
+					msg = fmt.Sprintf("🔴 *Streaming detected*\nThrottling upload to %s", limitStr)
+				} else {
+					msg = fmt.Sprintf("🟢 *Streaming ended*\nRestoring upload to %s", limitStr)
+				}
+				if err := telegram.SendMessage(msg); err != nil {
+					log.Printf("Error sending Telegram notification: %v", err)
 				}
 			} else {
 				log.Printf("[DRY RUN] Would set upload limit to %s", limitStr)

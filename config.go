@@ -17,6 +17,8 @@ type Config struct {
 	PollIntervalSec      int    `json:"poll_interval_sec"`
 	StreamingThreshold   int    `json:"streaming_threshold"`
 	IdleThreshold        int    `json:"idle_threshold"`
+	TelegramBotToken     string `json:"telegram_bot_token"`
+	TelegramChatID       string `json:"telegram_chat_id"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -35,6 +37,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if env := os.Getenv("QBITTORRENT_PASSWORD"); env != "" {
 		cfg.QBittorrentPassword = env
+	}
+	if env := os.Getenv("TELEGRAM_BOT_TOKEN"); env != "" {
+		cfg.TelegramBotToken = env
+	}
+	if env := os.Getenv("TELEGRAM_CHAT_ID"); env != "" {
+		cfg.TelegramChatID = env
 	}
 
 	if err := cfg.validate(); err != nil {

@@ -49,12 +49,13 @@ plex-helper/
 ├── config.go         # Configuration loading
 ├── plex.go           # Plex API client
 ├── qbittorrent.go    # qBittorrent API client
+├── telegram.go       # Telegram notification client
 ├── config.example.json
 ├── go.mod
 └── README.md
 ```
 
-Four source files in root. No external dependencies beyond the standard library.
+Five source files in root. No external dependencies beyond the standard library.
 
 ---
 
@@ -83,6 +84,12 @@ Four source files in root. No external dependencies beyond the standard library.
 - `Referer` header required for CSRF protection
 - Auto re-login on 403 response
 
+### `telegram.go`
+- `NewTelegramClient(token, chatID)` → create client (returns nil if unconfigured)
+- `SendMessage(text)` → POST to Telegram Bot API
+- Uses `parse_mode: Markdown` for formatting
+- Errors logged but never fatal (notifications are best-effort)
+
 ---
 
 ## Configuration
@@ -98,7 +105,9 @@ Four source files in root. No external dependencies beyond the standard library.
   "streaming_upload_kbps": 500,
   "poll_interval_sec": 10,
   "streaming_threshold": 2,
-  "idle_threshold": 3
+  "idle_threshold": 3,
+  "telegram_bot_token": "",
+  "telegram_chat_id": ""
 }
 ```
 
@@ -114,6 +123,8 @@ Four source files in root. No external dependencies beyond the standard library.
 | `poll_interval_sec` | How often to check Plex (seconds) |
 | `streaming_threshold` | Consecutive checks with streams before throttling |
 | `idle_threshold` | Consecutive checks without streams before restoring |
+| `telegram_bot_token` | Telegram bot token from @BotFather (can use TELEGRAM_BOT_TOKEN env var) |
+| `telegram_chat_id` | Telegram chat ID for notifications (can use TELEGRAM_CHAT_ID env var) |
 
 ---
 
@@ -181,6 +192,74 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+## Telegram Notifications
+
+Optional notifications when state changes occur.
+
+### Setup
+
+1. **Create a bot:** Message [@BotFather](https://t.me/BotFather) on Telegram
+   - Send `/newbot` and follow prompts
+   - Save the bot token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get your chat ID:**
+   - Send any message to your new bot
+   - Visit `https://api.telegram.org/bot<TOKEN>/getUpdates`
+   - Find `"chat":{"id":123456789}` in the response
+
+3. **Configure:** Add to config.json:
+   ```json
+   {
+     "telegram_bot_token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+     "telegram_chat_id": "123456789"
+   }
+   ```
+
+### Implementation
+
+**New file: `telegram.go`**
+- `TelegramClient` struct with bot token and chat ID
+- `SendMessage(text string)` → POST to Telegram API
+- Markdown formatting support for rich messages
+
+**API endpoint:** `POST https://api.telegram.org/bot<token>/sendMessage`
+
+**Request body:**
+```json
+{
+  "chat_id": "123456789",
+  "text": "🔴 *Streaming detected*\nThrottling upload to 500 KB/s",
+  "parse_mode": "Markdown",
+  "disable_notification": false
+}
+```
+
+**Integration in `main.go`:**
+- On state change `idle → streaming`: Send throttle notification
+- On state change `streaming → idle`: Send restore notification
+- Notification failures logged but don't block state changes
+
+### Message Format
+
+```
+🔴 Streaming detected
+Throttling upload to 500 KB/s
+
+🟢 Streaming ended
+Restoring upload to unlimited
+```
+
+### Config Fields
+
+| Field | Description |
+|-------|-------------|
+| `telegram_bot_token` | Bot token from @BotFather (can use TELEGRAM_BOT_TOKEN env var) |
+| `telegram_chat_id` | Your chat ID (can use TELEGRAM_CHAT_ID env var) |
+
+Notifications are disabled if either field is empty.
 
 ---
 
