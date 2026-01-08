@@ -1,0 +1,12 @@
+{
+    "plex_url": "https://your-plex-server.com",
+    "plex_token": "your-plex-token",
+    "qbittorrent_url": "http://your-qbit-url.com",
+    "qbittorrent_username": "admin",
+    "qbittorrent_password": "password",
+    "idle_upload_kbps": 0,
+    "streaming_upload_kbps": 500,
+    "poll_interval_sec": 10,
+    "streaming_threshold": 2,
+    "idle_threshold": 3
+}

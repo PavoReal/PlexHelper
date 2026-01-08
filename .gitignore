@@ -1,0 +1,13 @@
+# Binary
+plex-helper
+
+# Config with secrets
+config.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

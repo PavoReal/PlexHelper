@@ -1,0 +1,147 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+type State int
+
+const (
+	StateIdle State = iota
+	StateStreaming
+)
+
+func (s State) String() string {
+	if s == StateStreaming {
+		return "streaming"
+	}
+	return "idle"
+}
+
+func main() {
+	configPath := flag.String("config", "config.json", "path to config file")
+	dryRun := flag.Bool("dry-run", false, "log actions without changing limits")
+	once := flag.Bool("once", false, "run once and exit")
+	verbose := flag.Bool("verbose", false, "enable verbose logging")
+	flag.Parse()
+
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	plex := NewPlexClient(cfg.PlexURL, cfg.PlexToken)
+
+	qbt, err := NewQBittorrentClient(cfg.QBittorrentURL, cfg.QBittorrentUsername, cfg.QBittorrentPassword)
+	if err != nil {
+		log.Fatalf("Failed to create qBittorrent client: %v", err)
+	}
+
+	if cfg.QBittorrentUsername != "" {
+		if err := qbt.Login(); err != nil {
+			log.Fatalf("Failed to login to qBittorrent: %v", err)
+		}
+		log.Println("Logged in to qBittorrent")
+	}
+
+	state := StateIdle
+	streamingCounter := 0
+	idleCounter := 0
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	log.Printf("Starting plex-helper (poll interval: %ds)", cfg.PollIntervalSec)
+
+	ticker := time.NewTicker(time.Duration(cfg.PollIntervalSec) * time.Second)
+	defer ticker.Stop()
+
+	check := func() bool {
+		remoteStreams, err := plex.GetRemoteStreamCount()
+		if err != nil {
+			log.Printf("Error checking Plex: %v", err)
+			return false
+		}
+
+		if *verbose {
+			log.Printf("Remote streams: %d, state: %s, counters: streaming=%d idle=%d",
+				remoteStreams, state, streamingCounter, idleCounter)
+		}
+
+		hasStreams := remoteStreams > 0
+
+		if hasStreams {
+			idleCounter = 0
+			streamingCounter++
+		} else {
+			streamingCounter = 0
+			idleCounter++
+		}
+
+		var newState State
+		var shouldTransition bool
+
+		if state == StateIdle && streamingCounter >= cfg.StreamingThreshold {
+			newState = StateStreaming
+			shouldTransition = true
+		} else if state == StateStreaming && idleCounter >= cfg.IdleThreshold {
+			newState = StateIdle
+			shouldTransition = true
+		}
+
+		if shouldTransition {
+			var limitKbps int
+			if newState == StateStreaming {
+				limitKbps = cfg.StreamingUploadKbps
+			} else {
+				limitKbps = cfg.IdleUploadKbps
+			}
+
+			limitBytes := limitKbps * 1024
+
+			limitStr := fmt.Sprintf("%d KB/s", limitKbps)
+			if limitKbps == 0 {
+				limitStr = "unlimited"
+			}
+
+			log.Printf("State change: %s -> %s (setting upload limit to %s)", state, newState, limitStr)
+
+			if !*dryRun {
+				if err := qbt.SetUploadLimit(limitBytes); err != nil {
+					log.Printf("Error setting upload limit: %v", err)
+					return false
+				}
+			} else {
+				log.Printf("[DRY RUN] Would set upload limit to %s", limitStr)
+			}
+
+			state = newState
+			streamingCounter = 0
+			idleCounter = 0
+		}
+
+		return true
+	}
+
+	check()
+
+	if *once {
+		return
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			check()
+		case sig := <-sigCh:
+			log.Printf("Received %v, shutting down", sig)
+			return
+		}
+	}
+}
