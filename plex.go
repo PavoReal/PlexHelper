@@ -68,8 +68,8 @@ func (p *PlexClient) GetRemoteStreamCount() (int, error) {
 	count := 0
 	for _, meta := range sessions.MediaContainer.Metadata {
 		isRemote := meta.Session.Location == "wan" || !meta.Player.Local
-		isPlaying := meta.Player.State == "playing"
-		if isRemote && isPlaying {
+		isActive := meta.Player.State == "playing" || meta.Player.State == "buffering"
+		if isRemote && isActive {
 			count++
 		}
 	}

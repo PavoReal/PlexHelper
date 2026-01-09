@@ -69,11 +69,11 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	check := func() {
+	check := func() bool {
 		remoteStreams, err := plex.GetRemoteStreamCount()
 		if err != nil {
 			log.Printf("Error checking Plex: %v", err)
-			return
+			return false
 		}
 
 		appState.Update(state, remoteStreams, currentLimitKbps)
@@ -90,7 +90,7 @@ func main() {
 		}
 
 		if newState == state {
-			return
+			return false
 		}
 
 		var limitKbps int
@@ -112,7 +112,7 @@ func main() {
 		if !*dryRun {
 			if err := qbt.SetUploadLimit(limitBytes); err != nil {
 				log.Printf("Error setting upload limit: %v", err)
-				return
+				return false
 			}
 
 			var msg string
@@ -130,6 +130,7 @@ func main() {
 
 		state = newState
 		currentLimitKbps = limitKbps
+		return true
 	}
 
 	check()
@@ -149,7 +150,12 @@ func main() {
 			if *verbose {
 				log.Printf("Webhook event: %s", event)
 			}
-			check()
+			for i := 0; i < 5; i++ {
+				time.Sleep(500 * time.Millisecond)
+				if check() {
+					break
+				}
+			}
 		case <-fallbackTicker.C:
 			if *verbose {
 				log.Println("Fallback poll triggered")
