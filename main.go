@@ -55,6 +55,13 @@ func main() {
 		log.Println("Telegram notifications enabled")
 	}
 
+	appState := NewAppState()
+
+	if cfg.HealthPort > 0 {
+		healthServer := NewHealthServer(cfg.HealthPort, appState, plex, qbt)
+		healthServer.Start()
+	}
+
 	state := StateIdle
 	streamingCounter := 0
 	idleCounter := 0
@@ -67,12 +74,16 @@ func main() {
 	ticker := time.NewTicker(time.Duration(cfg.PollIntervalSec) * time.Second)
 	defer ticker.Stop()
 
+	currentLimitKbps := cfg.IdleUploadKbps
+
 	check := func() bool {
 		remoteStreams, err := plex.GetRemoteStreamCount()
 		if err != nil {
 			log.Printf("Error checking Plex: %v", err)
 			return false
 		}
+
+		appState.Update(state, remoteStreams, currentLimitKbps)
 
 		if *verbose {
 			log.Printf("Remote streams: %d, state: %s, counters: streaming=%d idle=%d",
@@ -137,6 +148,7 @@ func main() {
 			}
 
 			state = newState
+			currentLimitKbps = limitKbps
 			streamingCounter = 0
 			idleCounter = 0
 		}

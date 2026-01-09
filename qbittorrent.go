@@ -100,3 +100,30 @@ func (q *QBittorrentClient) setUploadLimitInternal(bytesPerSec int) error {
 
 	return nil
 }
+
+func (q *QBittorrentClient) Ping() error {
+	req, err := http.NewRequest("GET", q.baseURL+"/api/v2/app/version", nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Referer", q.baseURL)
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("making request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusForbidden {
+		if loginErr := q.Login(); loginErr != nil {
+			return fmt.Errorf("re-login failed: %w", loginErr)
+		}
+		return q.Ping()
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return nil
+}

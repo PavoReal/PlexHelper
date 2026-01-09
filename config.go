@@ -19,6 +19,7 @@ type Config struct {
 	IdleThreshold        int    `json:"idle_threshold"`
 	TelegramBotToken     string `json:"telegram_bot_token"`
 	TelegramChatID       string `json:"telegram_chat_id"`
+	HealthPort           int    `json:"health_port"`
 }
 
 func LoadConfig(path string) (*Config, error) {
