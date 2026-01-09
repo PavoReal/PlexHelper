@@ -59,8 +59,8 @@ func main() {
 	eventCh := make(chan string, 1)
 
 	if cfg.HealthPort > 0 {
-		healthServer := NewHealthServer(cfg.HealthPort, appState, plex, qbt, eventCh)
-		healthServer.Start()
+		server := NewServer(cfg.HealthPort, appState, plex, qbt, eventCh)
+		server.Start()
 	}
 
 	state := StateIdle

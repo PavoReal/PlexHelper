@@ -16,11 +16,14 @@ go build .                   # Build (uses module name)
 
 ## Architecture
 
-Simple polling-based state machine with four source files:
-- `main.go` - CLI, polling loop, state machine with hysteresis
+Event-driven state machine with webhook support and fallback polling:
+- `main.go` - CLI, event loop, state transitions
 - `config.go` - JSON config loading, env var overrides
+- `state.go` - Thread-safe application state
+- `server.go` - HTTP server (health endpoint + Plex webhook handler)
 - `plex.go` - Plex API client, remote stream detection
 - `qbittorrent.go` - qBittorrent API client, cookie auth, CSRF handling
+- `telegram.go` - Optional Telegram notifications
 
 ## Key API Details
 
