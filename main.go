@@ -136,9 +136,9 @@ func main() {
 
 				var msg string
 				if newState == StateStreaming {
-					msg = fmt.Sprintf("🔴 *Streaming detected*\nThrottling upload to %s", limitStr)
+					msg = fmt.Sprintf("*Streaming detected*\nThrottling upload to %s", limitStr)
 				} else {
-					msg = fmt.Sprintf("🟢 *Streaming ended*\nRestoring upload to %s", limitStr)
+					msg = fmt.Sprintf("*Streaming ended*\nRestoring upload to %s", limitStr)
 				}
 				if err := telegram.SendMessage(msg); err != nil {
 					log.Printf("Error sending Telegram notification: %v", err)
