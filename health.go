@@ -60,23 +60,26 @@ type HealthServer struct {
 	appState  *AppState
 	plex      *PlexClient
 	qbt       *QBittorrentClient
+	eventCh   chan<- string
 }
 
-func NewHealthServer(port int, appState *AppState, plex *PlexClient, qbt *QBittorrentClient) *HealthServer {
+func NewHealthServer(port int, appState *AppState, plex *PlexClient, qbt *QBittorrentClient, eventCh chan<- string) *HealthServer {
 	return &HealthServer{
 		port:     port,
 		appState: appState,
 		plex:     plex,
 		qbt:      qbt,
+		eventCh:  eventCh,
 	}
 }
 
 func (h *HealthServer) Start() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.handleHealth)
+	mux.HandleFunc("/webhook", h.handleWebhook)
 
 	addr := fmt.Sprintf(":%d", h.port)
-	log.Printf("Starting health server on %s", addr)
+	log.Printf("Starting server on %s (health + webhook)", addr)
 
 	go func() {
 		if err := http.ListenAndServe(addr, mux); err != nil {
@@ -131,4 +134,46 @@ func (h *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(resp)
+}
+
+type plexWebhookPayload struct {
+	Event   string `json:"event"`
+	Player  struct {
+		Local bool `json:"local"`
+	} `json:"Player"`
+}
+
+func (h *HealthServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	payload := r.FormValue("payload")
+	if payload == "" {
+		http.Error(w, "missing payload", http.StatusBadRequest)
+		return
+	}
+
+	var webhook plexWebhookPayload
+	if err := json.Unmarshal([]byte(payload), &webhook); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	switch webhook.Event {
+	case "media.play", "media.resume", "media.stop", "media.pause":
+		log.Printf("Webhook: %s (local=%v)", webhook.Event, webhook.Player.Local)
+		select {
+		case h.eventCh <- webhook.Event:
+		default:
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

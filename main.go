@@ -56,104 +56,80 @@ func main() {
 	}
 
 	appState := NewAppState()
+	eventCh := make(chan string, 1)
 
 	if cfg.HealthPort > 0 {
-		healthServer := NewHealthServer(cfg.HealthPort, appState, plex, qbt)
+		healthServer := NewHealthServer(cfg.HealthPort, appState, plex, qbt, eventCh)
 		healthServer.Start()
 	}
 
 	state := StateIdle
-	streamingCounter := 0
-	idleCounter := 0
+	currentLimitKbps := cfg.IdleUploadKbps
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("Starting plex-helper (poll interval: %ds)", cfg.PollIntervalSec)
-
-	ticker := time.NewTicker(time.Duration(cfg.PollIntervalSec) * time.Second)
-	defer ticker.Stop()
-
-	currentLimitKbps := cfg.IdleUploadKbps
-
-	check := func() bool {
+	check := func() {
 		remoteStreams, err := plex.GetRemoteStreamCount()
 		if err != nil {
 			log.Printf("Error checking Plex: %v", err)
-			return false
+			return
 		}
 
 		appState.Update(state, remoteStreams, currentLimitKbps)
 
 		if *verbose {
-			log.Printf("Remote streams: %d, state: %s, counters: streaming=%d idle=%d",
-				remoteStreams, state, streamingCounter, idleCounter)
-		}
-
-		hasStreams := remoteStreams > 0
-
-		if hasStreams {
-			idleCounter = 0
-			streamingCounter++
-		} else {
-			streamingCounter = 0
-			idleCounter++
+			log.Printf("Remote streams: %d, state: %s", remoteStreams, state)
 		}
 
 		var newState State
-		var shouldTransition bool
-
-		if state == StateIdle && streamingCounter >= cfg.StreamingThreshold {
+		if remoteStreams > 0 {
 			newState = StateStreaming
-			shouldTransition = true
-		} else if state == StateStreaming && idleCounter >= cfg.IdleThreshold {
+		} else {
 			newState = StateIdle
-			shouldTransition = true
 		}
 
-		if shouldTransition {
-			var limitKbps int
+		if newState == state {
+			return
+		}
+
+		var limitKbps int
+		if newState == StateStreaming {
+			limitKbps = cfg.StreamingUploadKbps
+		} else {
+			limitKbps = cfg.IdleUploadKbps
+		}
+
+		limitBytes := limitKbps * 1024
+
+		limitStr := fmt.Sprintf("%d KB/s", limitKbps)
+		if limitKbps == 0 {
+			limitStr = "unlimited"
+		}
+
+		log.Printf("State change: %s -> %s (setting upload limit to %s)", state, newState, limitStr)
+
+		if !*dryRun {
+			if err := qbt.SetUploadLimit(limitBytes); err != nil {
+				log.Printf("Error setting upload limit: %v", err)
+				return
+			}
+
+			var msg string
 			if newState == StateStreaming {
-				limitKbps = cfg.StreamingUploadKbps
+				msg = fmt.Sprintf("*Streaming detected*\nThrottling upload to %s", limitStr)
 			} else {
-				limitKbps = cfg.IdleUploadKbps
+				msg = fmt.Sprintf("*Streaming ended*\nRestoring upload to %s", limitStr)
 			}
-
-			limitBytes := limitKbps * 1024
-
-			limitStr := fmt.Sprintf("%d KB/s", limitKbps)
-			if limitKbps == 0 {
-				limitStr = "unlimited"
+			if err := telegram.SendMessage(msg); err != nil {
+				log.Printf("Error sending Telegram notification: %v", err)
 			}
-
-			log.Printf("State change: %s -> %s (setting upload limit to %s)", state, newState, limitStr)
-
-			if !*dryRun {
-				if err := qbt.SetUploadLimit(limitBytes); err != nil {
-					log.Printf("Error setting upload limit: %v", err)
-					return false
-				}
-
-				var msg string
-				if newState == StateStreaming {
-					msg = fmt.Sprintf("*Streaming detected*\nThrottling upload to %s", limitStr)
-				} else {
-					msg = fmt.Sprintf("*Streaming ended*\nRestoring upload to %s", limitStr)
-				}
-				if err := telegram.SendMessage(msg); err != nil {
-					log.Printf("Error sending Telegram notification: %v", err)
-				}
-			} else {
-				log.Printf("[DRY RUN] Would set upload limit to %s", limitStr)
-			}
-
-			state = newState
-			currentLimitKbps = limitKbps
-			streamingCounter = 0
-			idleCounter = 0
+		} else {
+			log.Printf("[DRY RUN] Would set upload limit to %s", limitStr)
 		}
 
-		return true
+		state = newState
+		currentLimitKbps = limitKbps
 	}
 
 	check()
@@ -162,9 +138,22 @@ func main() {
 		return
 	}
 
+	log.Printf("Starting plex-helper with webhooks (fallback poll: %ds)", cfg.PollIntervalSec)
+
+	fallbackTicker := time.NewTicker(time.Duration(cfg.PollIntervalSec) * time.Second)
+	defer fallbackTicker.Stop()
+
 	for {
 		select {
-		case <-ticker.C:
+		case event := <-eventCh:
+			if *verbose {
+				log.Printf("Webhook event: %s", event)
+			}
+			check()
+		case <-fallbackTicker.C:
+			if *verbose {
+				log.Println("Fallback poll triggered")
+			}
 			check()
 		case sig := <-sigCh:
 			log.Printf("Received %v, shutting down", sig)

@@ -6,7 +6,7 @@
     "qbittorrent_password": "password",
     "idle_upload_kbps": 0,
     "streaming_upload_kbps": 500,
-    "poll_interval_sec": 10,
+    "poll_interval_sec": 60,
     "streaming_threshold": 2,
     "idle_threshold": 3,
     "telegram_bot_token": "",

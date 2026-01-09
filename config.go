@@ -70,7 +70,7 @@ func (c *Config) validate() error {
 
 func (c *Config) applyDefaults() {
 	if c.PollIntervalSec <= 0 {
-		c.PollIntervalSec = 10
+		c.PollIntervalSec = 60
 	}
 	if c.StreamingThreshold <= 0 {
 		c.StreamingThreshold = 2

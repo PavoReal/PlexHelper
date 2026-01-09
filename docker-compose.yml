@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  plex-helper:
+    build: .
+    container_name: plex-helper
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.json:/etc/plex-helper/config.json:ro
