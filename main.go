@@ -57,11 +57,21 @@ func main() {
 
 	appState := NewAppState()
 	cooldown := NewCooldownTracker(cfg.CooldownMaxTransitions, cfg.CooldownWindowMinutes, cfg.CooldownStatePath)
+	manualThrottle := NewManualThrottle()
 	eventCh := make(chan string, 1)
+	telegramCmdCh := make(chan TelegramCommand, 1)
+	manualExpiryCh := make(chan struct{}, 1)
+	var expiryTimer *time.Timer
 
 	if cfg.HealthPort > 0 {
-		server := NewServer(cfg.HealthPort, appState, plex, qbt, eventCh)
+		server := NewServer(cfg.HealthPort, appState, plex, qbt, eventCh, manualThrottle)
 		server.Start()
+	}
+
+	if telegram != nil {
+		defaultDuration := time.Duration(cfg.ManualThrottleDefaultMinutes) * time.Minute
+		go telegram.StartPolling(telegramCmdCh, defaultDuration)
+		log.Println("Telegram command polling started")
 	}
 
 	state := StateIdle
@@ -71,6 +81,13 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	check := func() bool {
+		if manualThrottle.IsActive() {
+			if *verbose {
+				log.Println("Manual throttle active, skipping Plex check")
+			}
+			return false
+		}
+
 		remoteStreams, err := plex.GetRemoteStreamCount()
 		if err != nil {
 			log.Printf("Error checking Plex: %v", err)
@@ -156,6 +173,108 @@ func main() {
 	fallbackTicker := time.NewTicker(time.Duration(cfg.PollIntervalSec) * time.Second)
 	defer fallbackTicker.Stop()
 
+	handleTelegramCommand := func(cmd TelegramCommand) {
+		switch cmd.Command {
+		case "limit":
+			if expiryTimer != nil {
+				expiryTimer.Stop()
+			}
+
+			manualThrottle.Activate(cmd.Duration, cmd.Username)
+
+			limitKbps := cfg.StreamingUploadKbps
+			limitBytes := limitKbps * 1024
+			limitStr := fmt.Sprintf("%d KB/s", limitKbps)
+			if limitKbps == 0 {
+				limitStr = "unlimited"
+			}
+
+			log.Printf("Manual throttle activated by %s for %s", cmd.Username, cmd.Duration)
+
+			if !*dryRun {
+				if err := qbt.SetUploadLimit(limitBytes); err != nil {
+					log.Printf("Error setting upload limit: %v", err)
+					telegram.SendReply(cmd.ChatID, fmt.Sprintf("Error setting limit: %v", err))
+					return
+				}
+			}
+
+			currentLimitKbps = limitKbps
+			state = StateStreaming
+			appState.Update(state, 0, currentLimitKbps)
+
+			expiryTimer = time.AfterFunc(cmd.Duration, func() {
+				select {
+				case manualExpiryCh <- struct{}{}:
+				default:
+				}
+			})
+
+			msg := fmt.Sprintf("*Manual throttle activated*\nDuration: %s\nUpload limited to %s", formatDuration(cmd.Duration), limitStr)
+			telegram.SendReply(cmd.ChatID, msg)
+
+		case "unlimit":
+			if !manualThrottle.IsActive() {
+				telegram.SendReply(cmd.ChatID, "Manual throttle is not currently active.")
+				return
+			}
+
+			if expiryTimer != nil {
+				expiryTimer.Stop()
+			}
+			manualThrottle.Deactivate()
+
+			log.Printf("Manual throttle cancelled by %s", cmd.Username)
+
+			check()
+
+			limitStr := fmt.Sprintf("%d KB/s", currentLimitKbps)
+			if currentLimitKbps == 0 {
+				limitStr = "unlimited"
+			}
+			msg := fmt.Sprintf("*Manual throttle cancelled*\nRestored to %s state (%s)", state, limitStr)
+			telegram.SendReply(cmd.ChatID, msg)
+
+		case "status":
+			_, _, remoteStreams, uploadLimit, startTime := appState.Get()
+			uptime := time.Since(startTime).Round(time.Second)
+
+			limitStr := fmt.Sprintf("%d KB/s", uploadLimit)
+			if uploadLimit == 0 {
+				limitStr = "unlimited"
+			}
+
+			var statusMsg string
+			if manualThrottle.IsActive() {
+				remaining := manualThrottle.TimeRemaining()
+				statusMsg = fmt.Sprintf("*Status*\nState: manual throttle\nUpload limit: %s\nTime remaining: %s\nRemote streams: %d\nUptime: %s",
+					limitStr, formatDuration(remaining), remoteStreams, uptime)
+			} else {
+				statusMsg = fmt.Sprintf("*Status*\nState: %s\nUpload limit: %s\nRemote streams: %d\nUptime: %s",
+					state, limitStr, remoteStreams, uptime)
+			}
+			telegram.SendReply(cmd.ChatID, statusMsg)
+		}
+	}
+
+	handleManualExpiry := func() {
+		if !manualThrottle.IsActive() {
+			return
+		}
+
+		manualThrottle.Deactivate()
+		log.Println("Manual throttle expired")
+
+		check()
+
+		limitStr := fmt.Sprintf("%d KB/s", currentLimitKbps)
+		if currentLimitKbps == 0 {
+			limitStr = "unlimited"
+		}
+		msg := fmt.Sprintf("*Manual throttle expired*\nRestored to %s state (%s)", state, limitStr)
+		telegram.SendMessage(msg)
+	}
+
 	for {
 		select {
 		case event := <-eventCh:
@@ -173,9 +292,33 @@ func main() {
 				log.Println("Fallback poll triggered")
 			}
 			check()
+		case cmd := <-telegramCmdCh:
+			if *verbose {
+				log.Printf("Telegram command: %s", cmd.Command)
+			}
+			handleTelegramCommand(cmd)
+		case <-manualExpiryCh:
+			handleManualExpiry()
 		case sig := <-sigCh:
 			log.Printf("Received %v, shutting down", sig)
 			return
 		}
 	}
+}
+
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }

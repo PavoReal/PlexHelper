@@ -20,9 +20,10 @@ type Config struct {
 	TelegramBotToken         string `json:"telegram_bot_token"`
 	TelegramChatID           string `json:"telegram_chat_id"`
 	HealthPort               int    `json:"health_port"`
-	CooldownMaxTransitions   int    `json:"cooldown_max_transitions"`
-	CooldownWindowMinutes    int    `json:"cooldown_window_minutes"`
-	CooldownStatePath        string `json:"cooldown_state_path"`
+	CooldownMaxTransitions       int    `json:"cooldown_max_transitions"`
+	CooldownWindowMinutes        int    `json:"cooldown_window_minutes"`
+	CooldownStatePath            string `json:"cooldown_state_path"`
+	ManualThrottleDefaultMinutes int    `json:"manual_throttle_default_minutes"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -89,5 +90,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.CooldownStatePath == "" {
 		c.CooldownStatePath = "cooldown_state.json"
+	}
+	if c.ManualThrottleDefaultMinutes <= 0 {
+		c.ManualThrottleDefaultMinutes = 1440
 	}
 }

@@ -20,24 +20,28 @@ type HealthResponse struct {
 	LastCheck              string                   `json:"last_check,omitempty"`
 	RemoteStreams          int                      `json:"remote_streams"`
 	CurrentUploadLimitKbps int                      `json:"current_upload_limit_kbps"`
+	ManualThrottle         bool                     `json:"manual_throttle"`
+	ManualThrottleExpires  string                   `json:"manual_throttle_expires,omitempty"`
 	Services               map[string]ServiceHealth `json:"services"`
 }
 
 type Server struct {
-	port    int
-	state   *AppState
-	plex    *PlexClient
-	qbt     *QBittorrentClient
-	eventCh chan<- string
+	port           int
+	state          *AppState
+	plex           *PlexClient
+	qbt            *QBittorrentClient
+	eventCh        chan<- string
+	manualThrottle *ManualThrottle
 }
 
-func NewServer(port int, state *AppState, plex *PlexClient, qbt *QBittorrentClient, eventCh chan<- string) *Server {
+func NewServer(port int, state *AppState, plex *PlexClient, qbt *QBittorrentClient, eventCh chan<- string, manualThrottle *ManualThrottle) *Server {
 	return &Server{
-		port:    port,
-		state:   state,
-		plex:    plex,
-		qbt:     qbt,
-		eventCh: eventCh,
+		port:           port,
+		state:          state,
+		plex:           plex,
+		qbt:            qbt,
+		eventCh:        eventCh,
+		manualThrottle: manualThrottle,
 	}
 }
 
@@ -89,13 +93,26 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		lastCheckStr = lastCheck.Format(time.RFC3339)
 	}
 
+	manualActive, manualExpires, _ := s.manualThrottle.GetInfo()
+	var manualExpiresStr string
+	if manualActive {
+		manualExpiresStr = manualExpires.Format(time.RFC3339)
+	}
+
+	stateStr := state.String()
+	if manualActive {
+		stateStr = "manual_throttle"
+	}
+
 	resp := HealthResponse{
 		Status:                 status,
-		State:                  state.String(),
+		State:                  stateStr,
 		UptimeSec:              int64(time.Since(startTime).Seconds()),
 		LastCheck:              lastCheckStr,
 		RemoteStreams:          remoteStreams,
 		CurrentUploadLimitKbps: uploadLimit,
+		ManualThrottle:         manualActive,
+		ManualThrottleExpires:  manualExpiresStr,
 		Services:               services,
 	}
 
