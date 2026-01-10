@@ -7,19 +7,22 @@ import (
 )
 
 type Config struct {
-	PlexURL              string `json:"plex_url"`
-	PlexToken            string `json:"plex_token"`
-	QBittorrentURL       string `json:"qbittorrent_url"`
-	QBittorrentUsername  string `json:"qbittorrent_username"`
-	QBittorrentPassword  string `json:"qbittorrent_password"`
-	IdleUploadKbps       int    `json:"idle_upload_kbps"`
-	StreamingUploadKbps  int    `json:"streaming_upload_kbps"`
-	PollIntervalSec      int    `json:"poll_interval_sec"`
-	StreamingThreshold   int    `json:"streaming_threshold"`
-	IdleThreshold        int    `json:"idle_threshold"`
-	TelegramBotToken     string `json:"telegram_bot_token"`
-	TelegramChatID       string `json:"telegram_chat_id"`
-	HealthPort           int    `json:"health_port"`
+	PlexURL                  string `json:"plex_url"`
+	PlexToken                string `json:"plex_token"`
+	QBittorrentURL           string `json:"qbittorrent_url"`
+	QBittorrentUsername      string `json:"qbittorrent_username"`
+	QBittorrentPassword      string `json:"qbittorrent_password"`
+	IdleUploadKbps           int    `json:"idle_upload_kbps"`
+	StreamingUploadKbps      int    `json:"streaming_upload_kbps"`
+	PollIntervalSec          int    `json:"poll_interval_sec"`
+	StreamingThreshold       int    `json:"streaming_threshold"`
+	IdleThreshold            int    `json:"idle_threshold"`
+	TelegramBotToken         string `json:"telegram_bot_token"`
+	TelegramChatID           string `json:"telegram_chat_id"`
+	HealthPort               int    `json:"health_port"`
+	CooldownMaxTransitions   int    `json:"cooldown_max_transitions"`
+	CooldownWindowMinutes    int    `json:"cooldown_window_minutes"`
+	CooldownStatePath        string `json:"cooldown_state_path"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -77,5 +80,14 @@ func (c *Config) applyDefaults() {
 	}
 	if c.IdleThreshold <= 0 {
 		c.IdleThreshold = 3
+	}
+	if c.CooldownMaxTransitions <= 0 {
+		c.CooldownMaxTransitions = 2
+	}
+	if c.CooldownWindowMinutes <= 0 {
+		c.CooldownWindowMinutes = 60
+	}
+	if c.CooldownStatePath == "" {
+		c.CooldownStatePath = "cooldown_state.json"
 	}
 }

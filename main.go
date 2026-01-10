@@ -56,6 +56,7 @@ func main() {
 	}
 
 	appState := NewAppState()
+	cooldown := NewCooldownTracker(cfg.CooldownMaxTransitions, cfg.CooldownWindowMinutes, cfg.CooldownStatePath)
 	eventCh := make(chan string, 1)
 
 	if cfg.HealthPort > 0 {
@@ -93,6 +94,14 @@ func main() {
 			return false
 		}
 
+		if state == StateStreaming && newState == StateIdle {
+			if !cooldown.CanTransitionToIdle() {
+				log.Printf("Cooldown active: blocking streaming -> idle transition (%d/%d transitions used in window)",
+					cooldown.TransitionsInWindow(), cfg.CooldownMaxTransitions)
+				return false
+			}
+		}
+
 		var limitKbps int
 		if newState == StateStreaming {
 			limitKbps = cfg.StreamingUploadKbps
@@ -128,6 +137,9 @@ func main() {
 			log.Printf("[DRY RUN] Would set upload limit to %s", limitStr)
 		}
 
+		if state == StateStreaming && newState == StateIdle {
+			cooldown.RecordTransition()
+		}
 		state = newState
 		currentLimitKbps = limitKbps
 		return true
